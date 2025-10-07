@@ -2,15 +2,29 @@
  * MCP tools for NEAR contract and transaction operations
  */
 
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
+
 import { z } from 'zod';
 import type { NearClient } from '../near-client.js';
 
 const FinalitySchema = z.enum(['optimistic', 'near-final', 'final']).optional();
 
+interface ToolRequest {
+  params: {
+    name: string;
+    arguments?: unknown;
+  };
+}
+
+interface ToolResult {
+  content: { type: string; text: string }[];
+  [key: string]: unknown;
+}
+
 /**
  * Handle contract and transaction tool calls
  */
-export async function handleContractTools(request: any, nearClient: NearClient): Promise<any | null> {
+export async function handleContractTools(request: ToolRequest, nearClient: NearClient): Promise<ToolResult | null> {
   // near.viewFunction - Call a contract view function
   if (request.params.name === 'near.viewFunction') {
     const schema = z.object({
@@ -32,19 +46,25 @@ export async function handleContractTools(request: any, nearClient: NearClient):
         block_id: args.block_id,
         height: args.height,
         finality: args.finality,
-      }
+      },
     );
 
     // Try to decode result if it looks like JSON
+     
     let decodedResult = result;
     try {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       if (result.result && Array.isArray(result.result)) {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         const bytes = new Uint8Array(result.result);
         const text = new TextDecoder().decode(bytes);
         try {
+           
           const json = JSON.parse(text);
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
           decodedResult = { ...result, decoded: json, raw_result: result.result };
         } catch {
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
           decodedResult = { ...result, decoded: text, raw_result: result.result };
         }
       }

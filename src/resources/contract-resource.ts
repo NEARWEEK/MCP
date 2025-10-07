@@ -3,6 +3,8 @@
  * Provides contract metadata and common methods
  */
 
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
+
 import type { NearClient } from '../near-client.js';
 
 interface ContractMetadata {
@@ -44,7 +46,7 @@ const COMMON_VIEW_METHODS = [
  */
 export async function generateContractReadme(
   nearClient: NearClient,
-  accountId: string
+  accountId: string,
 ): Promise<ContractReadme> {
   // Get account to check if it has a contract
   const account = await nearClient.getAccount(accountId);
@@ -119,22 +121,22 @@ export function formatContractReadme(readme: ContractReadme): string {
     return output;
   }
 
-  output += `## Contract Info\n`;
+  output += '## Contract Info\n';
   output += `- Code Hash: ${readme.code_hash}\n`;
   output += `- Network: ${readme.network}\n\n`;
 
   if (readme.metadata) {
-    output += `## Metadata\n`;
+    output += '## Metadata\n';
     output += '```json\n';
     output += JSON.stringify(readme.metadata, null, 2);
     output += '\n```\n\n';
   } else if (readme.metadata_error) {
-    output += `## Metadata\n`;
+    output += '## Metadata\n';
     output += `Could not fetch metadata: ${readme.metadata_error}\n\n`;
   }
 
   if (readme.suggested_methods.length > 0) {
-    output += `## Suggested View Methods\n`;
+    output += '## Suggested View Methods\n';
     for (const method of readme.suggested_methods) {
       output += `- \`${method}\`\n`;
     }

@@ -2,15 +2,29 @@
  * MCP tools for NEAR block and chunk operations
  */
 
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
+
 import { z } from 'zod';
 import type { NearClient } from '../near-client.js';
 
 const FinalitySchema = z.enum(['optimistic', 'near-final', 'final']).optional();
 
+interface ToolRequest {
+  params: {
+    name: string;
+    arguments?: unknown;
+  };
+}
+
+interface ToolResult {
+  content: { type: string; text: string }[];
+  [key: string]: unknown;
+}
+
 /**
  * Handle block-related tool calls
  */
-export async function handleBlockTools(request: any, nearClient: NearClient): Promise<any | null> {
+export async function handleBlockTools(request: ToolRequest, nearClient: NearClient): Promise<ToolResult | null> {
   // near.getBlock - Get block details
   if (request.params.name === 'near.getBlock') {
       const schema = z.object({

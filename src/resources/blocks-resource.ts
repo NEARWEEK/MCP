@@ -3,6 +3,8 @@
  * Provides compact information about recent blocks
  */
 
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return */
+
 import type { NearClient } from '../near-client.js';
 
 interface CompactBlockInfo {
@@ -21,7 +23,7 @@ interface CompactBlockInfo {
  */
 export async function generateBlocksFeed(
   nearClient: NearClient,
-  count: number = 10
+  count = 10,
 ): Promise<CompactBlockInfo[]> {
   // Get the latest block first
   const latestBlock = await nearClient.getBlock({ finality: 'final' });
@@ -68,7 +70,7 @@ export function formatBlocksFeed(blocks: CompactBlockInfo[]): string {
     output += `- Author: ${block.author}\n`;
     output += `- Chunks: ${block.chunks_count}\n`;
     output += `- Gas Price: ${block.gas_price}\n`;
-    output += `\n`;
+    output += '\n';
   }
 
   return output;

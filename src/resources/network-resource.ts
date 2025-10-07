@@ -3,6 +3,8 @@
  * Provides current network information
  */
 
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
+
 import type { NearClient } from '../near-client.js';
 
 interface NetworkStatus {
@@ -23,7 +25,7 @@ interface NetworkStatus {
  * Generate network status summary
  */
 export async function generateNetworkStatus(
-  nearClient: NearClient
+  nearClient: NearClient,
 ): Promise<NetworkStatus> {
   const status = await nearClient.getNetworkStatus();
 

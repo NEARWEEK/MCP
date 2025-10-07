@@ -3,6 +3,8 @@
  * Provides summarized account information
  */
 
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
+
 import type { NearClient } from '../near-client.js';
 
 interface AccountCard {
@@ -26,7 +28,7 @@ interface AccountCard {
  */
 export async function generateAccountCard(
   nearClient: NearClient,
-  accountId: string
+  accountId: string,
 ): Promise<AccountCard> {
   // Fetch account details and access keys in parallel
   const [account, accessKeys] = await Promise.all([

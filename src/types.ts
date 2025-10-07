@@ -103,9 +103,7 @@ export interface Transaction {
   hash: string;
 }
 
-export interface Action {
-  [key: string]: unknown;
-}
+export type Action = Record<string, unknown>;
 
 export interface Receipt {
   predecessor_id: string;
@@ -151,10 +149,10 @@ export interface AccessKeyView {
 }
 
 export interface AccessKeyList {
-  keys: Array<{
+  keys: {
     public_key: string;
     access_key: AccessKeyView;
-  }>;
+  }[];
   block_height: number;
   block_hash: string;
 }
@@ -223,10 +221,10 @@ export interface NetworkStatusResult {
     epoch_id: string;
     epoch_start_height: number;
   };
-  validators: Array<{
+  validators: {
     account_id: string;
     is_slashed: boolean;
-  }>;
+  }[];
   version: {
     version: string;
     build: string;

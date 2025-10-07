@@ -13,7 +13,7 @@ import {
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import 'dotenv/config'
+import 'dotenv/config';
 import express from 'express';
 import { NearClient, type NearClientConfig } from './near-client.js';
 import type { NearNetwork } from './types.js';
@@ -40,12 +40,12 @@ function parseArgs(): {
   const args = process.argv.slice(2);
 
   // Read configuration from environment variables
-  let network: NearNetwork = (process.env.NEAR_NETWORK as NearNetwork) || 'mainnet';
-  const rpcUrl = process.env.NEAR_RPC_URL || process.env.RPC_URL;
-  const apiKey = process.env.NEAR_API_KEY || process.env.API_KEY;
+  let network: NearNetwork = (process.env.NEAR_NETWORK as NearNetwork) ?? 'mainnet';
+  const rpcUrl = process.env.NEAR_RPC_URL ?? process.env.RPC_URL;
+  const apiKey = process.env.NEAR_API_KEY ?? process.env.API_KEY;
 
   let useHttp = false;
-  let port = parseInt(process.env.PORT || '3000', 10);
+  let port = parseInt(process.env.PORT ?? '3000', 10);
 
   // Parse command line arguments
   for (const arg of args) {
@@ -59,8 +59,9 @@ function parseArgs(): {
   }
 
   if (network !== 'mainnet' && network !== 'testnet') {
-    console.error(`Invalid network: ${network}. Must be 'mainnet' or 'testnet'`);
-    process.exit(1);
+    const message = `Invalid network: ${String(network)}. Must be 'mainnet' or 'testnet'`;
+    console.error(message);
+    throw new Error(message);
   }
 
   const clientConfig: NearClientConfig = {
@@ -86,15 +87,15 @@ function createServer(nearClient: NearClient): Server {
         tools: {},
         resources: {},
       },
-    }
+    },
   );
 
   // Register tool call handler
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     // Try each tool handler
-    const result = await handleBlockTools(request, nearClient)
-      ?? await handleAccountTools(request, nearClient)
-      ?? await handleContractTools(request, nearClient);
+    const result = (await handleBlockTools(request, nearClient))
+      ?? (await handleAccountTools(request, nearClient))
+      ?? (await handleContractTools(request, nearClient));
 
     if (result) {
       return result;
@@ -104,19 +105,16 @@ function createServer(nearClient: NearClient): Server {
   });
 
   // List available tools
-  server.setRequestHandler(ListToolsRequestSchema, async () => {
-    return {
+  server.setRequestHandler(ListToolsRequestSchema, () => ({
       tools: [
         ...getBlockToolDefinitions(),
         ...getAccountToolDefinitions(),
         ...getContractToolDefinitions(),
       ],
-    };
-  });
+    }));
 
   // List available resources
-  server.setRequestHandler(ListResourcesRequestSchema, async () => {
-    return {
+  server.setRequestHandler(ListResourcesRequestSchema, () => ({
       resources: [
         {
           uri: 'near://account/{account_id}',
@@ -143,8 +141,7 @@ function createServer(nearClient: NearClient): Server {
           mimeType: 'text/markdown',
         },
       ],
-    };
-  });
+    }));
 
   // Handle resource reads
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
@@ -168,7 +165,7 @@ function createServer(nearClient: NearClient): Server {
     // Latest blocks: near://blocks/latest?count=10
     if (uri.startsWith('near://blocks/latest')) {
       const url = new URL(uri);
-      const count = parseInt(url.searchParams.get('count') || '10', 10);
+      const count = parseInt(url.searchParams.get('count') ?? '10', 10);
       const blocks = await generateBlocksFeed(nearClient, count);
       return {
         contents: [
@@ -229,14 +226,14 @@ async function startStdioServer(clientConfig: NearClientConfig) {
   console.error(`NEARWEEK MCP Server running on ${nearClient.getNetwork()} (stdio mode)`);
   console.error(`RPC URL: ${nearClient.getRpcUrl()}`);
   if (clientConfig.apiKey) {
-    console.error(`Using API Key authentication`);
+    console.error('Using API Key authentication');
   }
 }
 
 /**
  * Start server with HTTP transport
  */
-async function startHttpServer(clientConfig: NearClientConfig, port: number) {
+function startHttpServer(clientConfig: NearClientConfig, port: number) {
   const nearClient = new NearClient(clientConfig);
   const app = express();
 
@@ -255,12 +252,14 @@ async function startHttpServer(clientConfig: NearClientConfig, port: number) {
   // JSON-RPC endpoint for direct HTTP requests
   app.post('/rpc', async (req, res) => {
     try {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       const { method, params, id } = req.body;
 
       // Handle tools/list
       if (method === 'tools/list') {
         return res.json({
           jsonrpc: '2.0',
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
           id,
           result: {
             tools: [
@@ -274,14 +273,16 @@ async function startHttpServer(clientConfig: NearClientConfig, port: number) {
 
       // Handle tools/call
       if (method === 'tools/call') {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
         const request = { params: { name: params.name, arguments: params.arguments } };
-        const result = await handleBlockTools(request, nearClient)
-          ?? await handleAccountTools(request, nearClient)
-          ?? await handleContractTools(request, nearClient);
+        const result = (await handleBlockTools(request, nearClient))
+          ?? (await handleAccountTools(request, nearClient))
+          ?? (await handleContractTools(request, nearClient));
 
         if (result) {
           return res.json({
             jsonrpc: '2.0',
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
             id,
             result,
           });
@@ -289,8 +290,10 @@ async function startHttpServer(clientConfig: NearClientConfig, port: number) {
 
         return res.status(404).json({
           jsonrpc: '2.0',
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
           id,
-          error: { code: -32601, message: `Unknown tool: ${params.name}` },
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+          error: { code: -32601, message: `Unknown tool: ${String(params.name)}` },
         });
       }
 
@@ -298,6 +301,7 @@ async function startHttpServer(clientConfig: NearClientConfig, port: number) {
       if (method === 'resources/list') {
         return res.json({
           jsonrpc: '2.0',
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
           id,
           result: {
             resources: [
@@ -332,20 +336,27 @@ async function startHttpServer(clientConfig: NearClientConfig, port: number) {
 
       // Handle resources/read
       if (method === 'resources/read') {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
         const uri = params.uri;
-        let content;
+        let content: string;
 
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
         if (uri.startsWith('near://account/')) {
-          const accountId = uri.replace('near://account/', '');
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+          const accountId = uri.replace('near://account/', '') as string;
           const card = await generateAccountCard(nearClient, accountId);
           content = formatAccountCard(card);
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
         } else if (uri.startsWith('near://blocks/latest')) {
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
           const url = new URL(uri);
-          const count = parseInt(url.searchParams.get('count') || '10', 10);
+          const count = parseInt(url.searchParams.get('count') ?? '10', 10);
           const blocks = await generateBlocksFeed(nearClient, count);
           content = formatBlocksFeed(blocks);
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
         } else if (uri.startsWith('near://contract/') && uri.endsWith('/readme')) {
-          const accountId = uri.replace('near://contract/', '').replace('/readme', '');
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+          const accountId = uri.replace('near://contract/', '').replace('/readme', '') as string;
           const readme = await generateContractReadme(nearClient, accountId);
           content = formatContractReadme(readme);
         } else if (uri === 'near://network/status') {
@@ -354,16 +365,20 @@ async function startHttpServer(clientConfig: NearClientConfig, port: number) {
         } else {
           return res.status(404).json({
             jsonrpc: '2.0',
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
             id,
-            error: { code: -32602, message: `Unknown resource URI: ${uri}` },
+             
+            error: { code: -32602, message: `Unknown resource URI: ${String(uri)}` },
           });
         }
 
         return res.json({
           jsonrpc: '2.0',
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
           id,
           result: {
             contents: [{
+              // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
               uri,
               mimeType: 'text/markdown',
               text: content,
@@ -375,15 +390,19 @@ async function startHttpServer(clientConfig: NearClientConfig, port: number) {
       // Unknown method
       return res.status(404).json({
         jsonrpc: '2.0',
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         id,
-        error: { code: -32601, message: `Method not found: ${method}` },
+         
+        error: { code: -32601, message: `Method not found: ${String(method)}` },
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('RPC error:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Internal error';
       return res.status(500).json({
         jsonrpc: '2.0',
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
         id: req.body.id,
-        error: { code: -32603, message: error.message || 'Internal error' },
+        error: { code: -32603, message: errorMessage },
       });
     }
   });
@@ -395,6 +414,7 @@ async function startHttpServer(clientConfig: NearClientConfig, port: number) {
     const transport = new SSEServerTransport('/mcp/message', res);
 
     res.on('close', () => {
+      // eslint-disable-next-line @typescript-eslint/no-floating-promises
       transport.close();
     });
 
@@ -402,21 +422,21 @@ async function startHttpServer(clientConfig: NearClientConfig, port: number) {
   });
 
   // SSE message endpoint
-  app.post('/mcp/message', async (_req, res) => {
+  app.post('/mcp/message', (_req, res) => {
     // This endpoint is used by SSEServerTransport for bidirectional communication
     res.status(200).end();
   });
 
   app.listen(port, () => {
-    console.log(`NEARWEEK MCP Server running on ${nearClient.getNetwork()} (HTTP mode)`);
-    console.log(`RPC URL: ${nearClient.getRpcUrl()}`);
+    console.info(`NEARWEEK MCP Server running on ${nearClient.getNetwork()} (HTTP mode)`);
+    console.info(`RPC URL: ${nearClient.getRpcUrl()}`);
     if (clientConfig.apiKey) {
-      console.log(`Using API Key authentication`);
+      console.info('Using API Key authentication');
     }
-    console.log(`Listening on http://localhost:${port}`);
-    console.log(`MCP endpoint: http://localhost:${port}/mcp`);
-    console.log(`RPC endpoint: http://localhost:${port}/rpc`);
-    console.log(`Health check: http://localhost:${port}/health`);
+    console.info(`Listening on http://localhost:${port}`);
+    console.info(`MCP endpoint: http://localhost:${port}/mcp`);
+    console.info(`RPC endpoint: http://localhost:${port}/rpc`);
+    console.info(`Health check: http://localhost:${port}/health`);
   });
 }
 
@@ -427,7 +447,7 @@ async function main() {
   const { clientConfig, useHttp, port } = parseArgs();
 
   if (useHttp) {
-    await startHttpServer(clientConfig, port);
+    startHttpServer(clientConfig, port);
   } else {
     await startStdioServer(clientConfig);
   }
@@ -436,5 +456,5 @@ async function main() {
 // Run the server
 main().catch((error) => {
   console.error('Server error:', error);
-  process.exit(1);
+  throw error;
 });
