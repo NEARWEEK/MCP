@@ -232,11 +232,23 @@ async function startStdioServer(clientConfig: NearClientConfig) {
 }
 
 /**
+ * Session storage for maintaining server instances across requests
+ */
+interface ServerSession {
+  server: Server;
+  transport: StreamableHTTPServerTransport;
+  nearClient: NearClient;
+}
+
+/**
  * Start server with HTTP transport
  */
 function startHttpServer(clientConfig: NearClientConfig, port: number) {
   const nearClient = new NearClient(clientConfig);
   const app = express();
+
+  // Store server instances per session ID
+  const serverSessions = new Map<string, ServerSession>();
 
   app.use(express.json());
 
@@ -412,18 +424,51 @@ function startHttpServer(clientConfig: NearClientConfig, port: number) {
   // Handles GET (SSE streams), POST (JSON-RPC messages), and DELETE (session termination)
   app.all('/mcp', async (req, res) => {
     try {
-      // Create transport with session management
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => randomUUID(),
-        enableJsonResponse: false, // Use SSE streaming for real-time updates
-      });
+      // Extract session ID from request header (if present)
+      const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
-      // Create a new server instance for this request
-      const server = createServer(nearClient);
-      await server.connect(transport);
+      // Try to get existing session
+      let session = sessionId ? serverSessions.get(sessionId) : undefined;
 
-      // Handle the request (GET/POST/DELETE)
-      await transport.handleRequest(req, res, req.body);
+      if (!session) {
+        // Create new session with transport and server
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          enableJsonResponse: false, // Use SSE streaming for real-time updates
+
+          // Called when a new session is initialized
+          onsessioninitialized: (newSessionId: string) => {
+            console.info(`MCP session initialized: ${newSessionId}`);
+            // Session will be stored after handleRequest completes
+          },
+
+          // Called when session is closed (DELETE request)
+          onsessionclosed: async (closedSessionId: string) => {
+            console.info(`MCP session closed: ${closedSessionId}`);
+            const closedSession = serverSessions.get(closedSessionId);
+            if (closedSession) {
+              // Clean up server instance
+              await closedSession.server.close();
+              serverSessions.delete(closedSessionId);
+            }
+          },
+        });
+
+        // Create new server instance for this session
+        const server = createServer(nearClient);
+        await server.connect(transport);
+
+        session = { server, transport, nearClient };
+      }
+
+      // Handle the request with the session's transport
+      await session.transport.handleRequest(req, res, req.body);
+
+      // Store session after first request (when sessionId is assigned)
+      if (session.transport.sessionId && !serverSessions.has(session.transport.sessionId)) {
+        serverSessions.set(session.transport.sessionId, session);
+        console.info(`MCP session stored: ${session.transport.sessionId}`);
+      }
     } catch (error) {
       console.error('MCP transport error:', error);
       if (!res.headersSent) {
