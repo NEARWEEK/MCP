@@ -63,16 +63,18 @@ npm start -- --http
 # Testnet on custom port
 npm start testnet --http --port=8080
 
-# Using npm script
+# Using npm scripts
 npm run start:http
+npm run start:streamableHttp  # Explicit alias for Streamable HTTP transport
 
 # With environment variables
 PORT=8080 NEAR_NETWORK=testnet npm start -- --http
 ```
 
 The HTTP server provides:
-- MCP endpoint: `http://localhost:3000/mcp` (POST)
-- Health check: `http://localhost:3000/health` (GET)
+- **MCP endpoint**: `http://localhost:3000/mcp` (GET/POST/DELETE) - Streamable HTTP transport with session management
+- **RPC endpoint**: `http://localhost:3000/rpc` (POST) - Simple JSON-RPC for direct requests (non-MCP clients)
+- **Health check**: `http://localhost:3000/health` (GET)
 
 ### Configuration
 
@@ -138,14 +140,38 @@ Add to your MCP client configuration:
 
 Start the server in HTTP mode and connect to:
 - Base URL: `http://localhost:3000`
-- MCP Endpoint: `http://localhost:3000/mcp`
-- RPC Endpoint: `http://localhost:3000/rpc`
+- **MCP Endpoint**: `http://localhost:3000/mcp` - Full MCP protocol with Streamable HTTP transport
+  - Supports GET (SSE streams), POST (JSON-RPC messages), DELETE (session termination)
+  - Includes session management with `Mcp-Session-Id` headers
+  - Complies with MCP specification 2025-03-26
+- **RPC Endpoint**: `http://localhost:3000/rpc` - Simple JSON-RPC endpoint for non-MCP clients
 
-Example using curl:
+#### Using the MCP endpoint (for MCP clients)
+
+MCP clients should use the `/mcp` endpoint with proper protocol headers. The server manages sessions automatically.
+
+#### Using the RPC endpoint (for simple HTTP clients)
+
+For direct JSON-RPC requests without MCP protocol overhead:
+
 ```bash
+# List available tools
 curl -X POST http://localhost:3000/rpc \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc": "2.0", "method": "tools/list", "id": 1}'
+
+# Call a tool
+curl -X POST http://localhost:3000/rpc \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "near.getBlock",
+      "arguments": {"finality": "final"}
+    },
+    "id": 2
+  }'
 ```
 
 ## Requirements
@@ -156,8 +182,13 @@ curl -X POST http://localhost:3000/rpc \
 ## Architecture
 
 - **Runtime**: Node.js 22+ with ES2022 modules
-- **Transport**: MCP stdio or HTTP (SSE) transport
+- **Transport**:
+  - MCP stdio transport for desktop clients
+  - Streamable HTTP transport (MCP 2025-03-26 spec) for web clients
+  - Session management with cryptographically secure UUIDs
 - **NEAR SDK**: near-api-js v5+ official JavaScript SDK
 - **RPC**: NEAR JSON RPC via JsonRpcProvider with optional API key authentication
 - **Validation**: Zod schemas for all inputs
-- **HTTP Server**: Express.js (when using HTTP mode)
+- **HTTP Server**: Express.js with dual endpoints:
+  - `/mcp` - Full MCP protocol with Streamable HTTP transport
+  - `/rpc` - Simple JSON-RPC for non-MCP clients

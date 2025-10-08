@@ -6,7 +6,7 @@
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -15,6 +15,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import 'dotenv/config';
 import express from 'express';
+import { randomUUID } from 'node:crypto';
 import { NearClient, type NearClientConfig } from './near-client.js';
 import type { NearNetwork } from './types.js';
 
@@ -407,24 +408,31 @@ function startHttpServer(clientConfig: NearClientConfig, port: number) {
     }
   });
 
-  // SSE/MCP endpoint for MCP clients (Claude Desktop, etc.)
-  app.post('/mcp', async (_req, res) => {
-    // Create a new server instance for each request to avoid state conflicts
-    const server = createServer(nearClient);
-    const transport = new SSEServerTransport('/mcp/message', res);
+  // MCP Streamable HTTP Transport endpoint
+  // Handles GET (SSE streams), POST (JSON-RPC messages), and DELETE (session termination)
+  app.all('/mcp', async (req, res) => {
+    try {
+      // Create transport with session management
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+        enableJsonResponse: false, // Use SSE streaming for real-time updates
+      });
 
-    res.on('close', () => {
-      // eslint-disable-next-line @typescript-eslint/no-floating-promises
-      transport.close();
-    });
+      // Create a new server instance for this request
+      const server = createServer(nearClient);
+      await server.connect(transport);
 
-    await server.connect(transport);
-  });
-
-  // SSE message endpoint
-  app.post('/mcp/message', (_req, res) => {
-    // This endpoint is used by SSEServerTransport for bidirectional communication
-    res.status(200).end();
+      // Handle the request (GET/POST/DELETE)
+      await transport.handleRequest(req, res, req.body);
+    } catch (error) {
+      console.error('MCP transport error:', error);
+      if (!res.headersSent) {
+        res.status(500).json({
+          error: 'Internal server error',
+          message: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
+    }
   });
 
   app.listen(port, () => {
