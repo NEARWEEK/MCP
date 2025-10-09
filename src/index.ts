@@ -11,6 +11,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
   ListResourcesRequestSchema,
+  ListResourceTemplatesRequestSchema,
   ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import 'dotenv/config';
@@ -118,27 +119,33 @@ function createServer(nearClient: NearClient): Server {
   server.setRequestHandler(ListResourcesRequestSchema, () => ({
       resources: [
         {
-          uri: 'near://account/{account_id}',
-          name: 'Account Card',
-          description: 'Summarized account information including balance, storage, and keys',
-          mimeType: 'text/markdown',
-        },
-        {
           uri: 'near://blocks/latest',
           name: 'Latest Blocks',
           description: 'Feed of recent blocks (use ?count=N to specify number, default 10)',
           mimeType: 'text/markdown',
         },
         {
-          uri: 'near://contract/{account_id}/readme',
-          name: 'Contract README',
-          description: 'Contract metadata and suggested view methods',
-          mimeType: 'text/markdown',
-        },
-        {
           uri: 'near://network/status',
           name: 'Network Status',
           description: 'Current network status and protocol information',
+          mimeType: 'text/markdown',
+        },
+      ],
+    }));
+
+  // List available resource templates
+  server.setRequestHandler(ListResourceTemplatesRequestSchema, () => ({
+      resourceTemplates: [
+        {
+          uriTemplate: 'near://account/{account_id}',
+          name: 'Account Card',
+          description: 'Summarized account information including balance, storage, and keys',
+          mimeType: 'text/markdown',
+        },
+        {
+          uriTemplate: 'near://contract/{account_id}/readme',
+          name: 'Contract README',
+          description: 'Contract metadata and suggested view methods',
           mimeType: 'text/markdown',
         },
       ],
@@ -319,27 +326,40 @@ function startHttpServer(clientConfig: NearClientConfig, port: number) {
           result: {
             resources: [
               {
-                uri: 'near://account/{account_id}',
-                name: 'Account Card',
-                description: 'Summarized account information including balance, storage, and keys',
-                mimeType: 'text/markdown',
-              },
-              {
                 uri: 'near://blocks/latest',
                 name: 'Latest Blocks',
                 description: 'Feed of recent blocks (use ?count=N to specify number, default 10)',
                 mimeType: 'text/markdown',
               },
               {
-                uri: 'near://contract/{account_id}/readme',
-                name: 'Contract README',
-                description: 'Contract metadata and suggested view methods',
-                mimeType: 'text/markdown',
-              },
-              {
                 uri: 'near://network/status',
                 name: 'Network Status',
                 description: 'Current network status and protocol information',
+                mimeType: 'text/markdown',
+              },
+            ],
+          },
+        });
+      }
+
+      // Handle resources/templates/list
+      if (method === 'resources/templates/list') {
+        return res.json({
+          jsonrpc: '2.0',
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          id,
+          result: {
+            resourceTemplates: [
+              {
+                uriTemplate: 'near://account/{account_id}',
+                name: 'Account Card',
+                description: 'Summarized account information including balance, storage, and keys',
+                mimeType: 'text/markdown',
+              },
+              {
+                uriTemplate: 'near://contract/{account_id}/readme',
+                name: 'Contract README',
+                description: 'Contract metadata and suggested view methods',
                 mimeType: 'text/markdown',
               },
             ],

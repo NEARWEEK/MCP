@@ -24,10 +24,13 @@ Model Context Protocol (MCP) server for accessing NEAR blockchain data. Provides
 
 ### Resources
 
-- `near://account/{account_id}` - Account summary card
+**Static Resources:**
 - `near://blocks/latest?count=N` - Recent blocks feed
-- `near://contract/{account_id}/readme` - Contract info and suggested methods
 - `near://network/status` - Network status and protocol info
+
+**Resource Templates (parameterized):**
+- `near://account/{account_id}` - Account summary card
+- `near://contract/{account_id}/readme` - Contract info and suggested methods
 
 ## Installation
 
