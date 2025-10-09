@@ -30,6 +30,7 @@ export async function generateBlocksFeed(
   const startHeight = latestBlock.header.height;
 
   // Fetch multiple blocks in parallel
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const blockPromises: Promise<any>[] = [];
   for (let i = 0; i < count; i++) {
     const height = startHeight - i;
@@ -41,7 +42,9 @@ export async function generateBlocksFeed(
   const blocks = await Promise.all(blockPromises);
 
   // Transform to compact format
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return blocks.map((block: any) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const txCount = block.chunks.reduce((sum: number, chunk: any) => sum + chunk.tx_root.length, 0);
 
     return {

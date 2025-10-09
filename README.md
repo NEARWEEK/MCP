@@ -75,19 +75,84 @@ PORT=8080 NEAR_NETWORK=testnet npm start -- --http
 ```
 
 The HTTP server provides:
-- **MCP endpoint**: `http://localhost:3000/mcp` (GET/POST/DELETE) - Streamable HTTP transport with session management
-- **RPC endpoint**: `http://localhost:3000/rpc` (POST) - Simple JSON-RPC for direct requests (non-MCP clients)
-- **Health check**: `http://localhost:3000/health` (GET)
+- **MCP endpoint**: `http://localhost:3000/mcp` (GET/POST/DELETE) - Streamable HTTP transport with session management (requires authentication)
+- **RPC endpoint**: `http://localhost:3000/rpc` (POST) - Simple JSON-RPC for direct requests (requires authentication)
+- **Health check**: `http://localhost:3000/health` (GET) - No authentication required
+
+## Authentication
+
+The MCP server requires API key authentication for all operations (both stdio and HTTP modes). Authentication is managed by the MCP Backend API service.
+
+### Prerequisites
+
+1. **Start the MCP Backend API**:
+```bash
+cd ../mcp-backend-api
+npm install
+npm run build
+npm start
+```
+
+The MCP Backend API runs on port 3001 by default. See `../mcp-backend-api/README.md` for details.
+
+2. **Generate an API Key**:
+```bash
+cd ../mcp-backend-api
+npm run generate:key -- --name="My MCP Client"
+```
+
+Save the generated API key securely - it will be needed for both stdio and HTTP modes.
+
+### Stdio Mode Authentication
+
+API key must be provided via the `MCP_API_KEY` or `API_KEY` environment variable:
+
+```bash
+# Set the API key
+export MCP_API_KEY=your-generated-api-key-here
+
+# Optional: Set MCP Backend API URL (default: http://localhost:3001)
+export AUTH_BACKEND_URL=http://localhost:3001
+
+# Start the server
+npm start
+```
+
+The server will validate the API key on startup and exit if invalid.
+
+### HTTP Mode Authentication
+
+API key must be provided as a Bearer token in the `Authorization` header:
+
+```bash
+# Start the server
+npm start -- --http
+
+# Make authenticated requests
+curl -X POST http://localhost:3000/mcp \
+  -H "Authorization: Bearer your-generated-api-key-here" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
+```
+
+All requests to `/mcp` and `/rpc` endpoints require the `Authorization: Bearer <api-key>` header.
 
 ### Configuration
 
 Configure the server via environment variables or CLI arguments:
 
+#### MCP Server Configuration
+
 - **Network**: `NEAR_NETWORK=mainnet|testnet` or CLI arg `testnet`
 - **Transport**: CLI flag `--http` or `-h` for HTTP mode (default: stdio)
 - **Port**: `PORT=3000` or CLI arg `--port=8080` (HTTP mode only)
 - **RPC URL**: `NEAR_RPC_URL` or `RPC_URL` (overrides default network endpoint)
-- **API Key**: `NEAR_API_KEY` or `API_KEY` (for authenticated RPC providers)
+- **NEAR API Key**: `NEAR_API_KEY` or `API_KEY` (for authenticated NEAR RPC providers like FastNEAR)
+
+#### Authentication Configuration
+
+- **MCP API Key**: `MCP_API_KEY` or `API_KEY` (required for stdio mode authentication)
+- **MCP Backend API URL**: `AUTH_BACKEND_URL` (default: `http://localhost:3001`)
 
 #### Using Custom RPC Providers
 
@@ -123,7 +188,7 @@ npm run typecheck
 
 ### Stdio Transport (Claude Desktop, VS Code, etc.)
 
-Add to your MCP client configuration:
+Add to your MCP client configuration with your API key:
 
 ```json
 {
@@ -132,12 +197,16 @@ Add to your MCP client configuration:
       "command": "node",
       "args": ["/path/to/nearweek/src/MCP/dist/index.js", "mainnet"],
       "env": {
-        "NEAR_NETWORK": "mainnet"
+        "NEAR_NETWORK": "mainnet",
+        "MCP_API_KEY": "your-generated-api-key-here",
+        "AUTH_BACKEND_URL": "http://localhost:3001"
       }
     }
   }
 }
 ```
+
+**Important**: Replace `your-generated-api-key-here` with an actual API key generated using the MCP Backend API's CLI tool.
 
 ### HTTP Transport (Web-based clients)
 
@@ -151,20 +220,30 @@ Start the server in HTTP mode and connect to:
 
 #### Using the MCP endpoint (for MCP clients)
 
-MCP clients should use the `/mcp` endpoint with proper protocol headers. The server manages sessions automatically.
+MCP clients should use the `/mcp` endpoint with proper protocol headers and Bearer token authentication. The server manages sessions automatically.
+
+```bash
+# Example authenticated MCP request
+curl -X POST http://localhost:3000/mcp \
+  -H "Authorization: Bearer your-generated-api-key-here" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"initialize","params":{},"id":1}'
+```
 
 #### Using the RPC endpoint (for simple HTTP clients)
 
-For direct JSON-RPC requests without MCP protocol overhead:
+For direct JSON-RPC requests without MCP protocol overhead (still requires authentication):
 
 ```bash
-# List available tools
+# List available tools (with authentication)
 curl -X POST http://localhost:3000/rpc \
+  -H "Authorization: Bearer your-generated-api-key-here" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc": "2.0", "method": "tools/list", "id": 1}'
 
-# Call a tool
+# Call a tool (with authentication)
 curl -X POST http://localhost:3000/rpc \
+  -H "Authorization: Bearer your-generated-api-key-here" \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",

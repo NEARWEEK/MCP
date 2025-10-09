@@ -248,6 +248,62 @@ interface ServerSession {
 }
 
 /**
+ * Validate API key with MCP Backend API
+ * @param key The API key to validate
+ * @returns true if key is valid, false otherwise
+ */
+async function validateApiKey(key: string): Promise<boolean> {
+  try {
+    const authBackendUrl = process.env.AUTH_BACKEND_URL ?? 'http://localhost:3001';
+    const response = await fetch(`${authBackendUrl}/api/validate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key }),
+    });
+
+    if (!response.ok) {
+      return false;
+    }
+
+    const result = await response.json() as { valid: boolean };
+    return result.valid === true;
+  } catch (error) {
+    console.error('MCP Backend API error:', error);
+    return false;
+  }
+}
+
+/**
+ * Express middleware to validate API key from Authorization header
+ */
+async function authMiddleware(req: express.Request, res: express.Response, next: express.NextFunction): Promise<void> {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader?.startsWith('Bearer ')) {
+    res.status(401).json({
+      error: 'Unauthorized',
+      message: 'Missing or invalid Authorization header. Expected: Authorization: Bearer <api-key>',
+    });
+    return;
+  }
+
+  const apiKey = authHeader.substring(7); // Remove "Bearer "
+
+  const isValid = await validateApiKey(apiKey);
+
+  if (!isValid) {
+    res.status(403).json({
+      error: 'Forbidden',
+      message: 'Invalid or inactive API key',
+    });
+    return;
+  }
+
+  // API key is valid, continue to next handler
+  next();
+}
+
+/**
  * Start server with HTTP transport
  */
 function startHttpServer(clientConfig: NearClientConfig, port: number) {
@@ -269,8 +325,8 @@ function startHttpServer(clientConfig: NearClientConfig, port: number) {
     });
   });
 
-  // JSON-RPC endpoint for direct HTTP requests
-  app.post('/rpc', async (req, res) => {
+  // JSON-RPC endpoint for direct HTTP requests (with authentication)
+  app.post('/rpc', authMiddleware, async (req, res) => {
     try {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       const { method, params, id } = req.body;
@@ -440,9 +496,9 @@ function startHttpServer(clientConfig: NearClientConfig, port: number) {
     }
   });
 
-  // MCP Streamable HTTP Transport endpoint
+  // MCP Streamable HTTP Transport endpoint (with authentication)
   // Handles GET (SSE streams), POST (JSON-RPC messages), and DELETE (session termination)
-  app.all('/mcp', async (req, res) => {
+  app.all('/mcp', authMiddleware, async (req, res) => {
     try {
       // Extract session ID from request header (if present)
       const sessionId = req.headers['mcp-session-id'] as string | undefined;
@@ -522,6 +578,28 @@ async function main() {
   if (useHttp) {
     startHttpServer(clientConfig, port);
   } else {
+    // Stdio mode: validate API key from environment variable
+    const apiKey = process.env.MCP_API_KEY ?? process.env.API_KEY;
+
+    if (!apiKey) {
+      console.error('Error: API_KEY or MCP_API_KEY environment variable required for stdio mode');
+      console.error('Set it with: export MCP_API_KEY=your-api-key-here');
+      // eslint-disable-next-line n/no-process-exit
+      process.exit(1);
+    }
+
+    // Validate with MCP Backend API
+    console.info('Validating API key with MCP Backend API...');
+    const isValid = await validateApiKey(apiKey);
+
+    if (!isValid) {
+      console.error('Error: Invalid or inactive API key');
+      console.error('Please check your API key or contact the administrator');
+      // eslint-disable-next-line n/no-process-exit
+      process.exit(1);
+    }
+
+    console.info('✓ API key validated successfully');
     await startStdioServer(clientConfig);
   }
 }
