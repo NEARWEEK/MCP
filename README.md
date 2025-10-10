@@ -2,6 +2,10 @@
 
 Model Context Protocol (MCP) server for accessing NEAR blockchain data. Provides tools and resources for querying accounts, blocks, contracts, and transactions on NEAR Protocol.
 
+## Related Repositories
+
+- **[MCP Backend API](https://github.com/NEARWEEK/mcp-backend-api)** - Authentication backend service for API key management
+
 ## Features
 
 ### Tools
