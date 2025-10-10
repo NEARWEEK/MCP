@@ -6,7 +6,6 @@
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -17,10 +16,14 @@ import {
 import 'dotenv/config';
 import express from 'express';
 import morgan from 'morgan';
-import { randomUUID } from 'node:crypto';
 import { NearClient, type NearClientConfig } from './near-client.js';
 import type { NearNetwork } from './types.js';
 import { initLogger, getLogger, logError, logFatal, type LogLevel } from './logger.js';
+
+// HTTP module imports
+import { createResponseCaptureMiddleware, createStructuredLoggingMiddleware } from './http/middleware.js';
+import { createHealthCheckHandler, createRpcHandler, createMcpHandler } from './http/handlers.js';
+import { SessionManager } from './http/session.js';
 
 // Tool handlers
 import { handleBlockTools, getBlockToolDefinitions } from './tools/block-tools.js';
@@ -248,15 +251,6 @@ async function startStdioServer(clientConfig: NearClientConfig) {
 }
 
 /**
- * Session storage for maintaining server instances across requests
- */
-interface ServerSession {
-  server: Server;
-  transport: StreamableHTTPServerTransport;
-  nearClient: NearClient;
-}
-
-/**
  * Validate API key with MCP Backend API
  * @param key The API key to validate
  * @returns true if key is valid, false otherwise
@@ -320,385 +314,21 @@ function startHttpServer(clientConfig: NearClientConfig, port: number, accessLog
   const app = express();
   const logger = getLogger();
 
-  // Store server instances per session ID
-  const serverSessions = new Map<string, ServerSession>();
+  // Create session manager for MCP sessions
+  const sessionManager = new SessionManager();
 
-  // Morgan access logging (always enabled)
-  app.use(morgan(accessLogFormat));
+  // Configure middleware
+  app.use(morgan(accessLogFormat)); // Access logging
+  app.use(createResponseCaptureMiddleware()); // Response body capture for trace logging
+  app.use(express.json()); // Parse JSON bodies
+  app.use(createStructuredLoggingMiddleware()); // Structured HTTP logging
 
-  // Response body capture middleware (for trace logging)
-  app.use((_req, res, next) => {
-    const originalJson = res.json.bind(res);
-    const originalSend = res.send.bind(res);
+  // Register endpoints
+  app.get('/health', createHealthCheckHandler(nearClient, clientConfig));
+  app.post('/rpc', authMiddleware, createRpcHandler(nearClient));
+  app.all('/mcp', authMiddleware, createMcpHandler(sessionManager, createServer, nearClient));
 
-    res.json = function(body: unknown) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
-      (res as any).capturedBody = body;
-      return originalJson(body);
-    };
-
-    res.send = function(body: unknown) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
-      (res as any).capturedBody = body;
-      return originalSend(body);
-    };
-
-    next();
-  });
-
-  app.use(express.json());
-
-  // Structured logging middleware (only at trace level for normal requests)
-  app.use((req, res, next) => {
-    const start = Date.now();
-    res.on('finish', () => {
-      const duration = Date.now() - start;
-      const logData = {
-        method: req.method,
-        url: req.url,
-        // Don't log request/response body for /mcp (has its own logging)
-        ...(req.url !== '/mcp' && {
-          requestBody: req.body as unknown,
-        }),
-        statusCode: res.statusCode,
-        responseTime: duration,
-        ...(logger.level === 'trace' && req.url !== '/mcp' && {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-          responseBody: (res as any).capturedBody,
-          responseHeaders: {
-            'content-type': res.get('content-type'),
-            'content-length': res.get('content-length'),
-          },
-        }),
-      };
-
-      // Only log errors to structured logs, or everything at trace level
-      if (res.statusCode >= 500) {
-        // 5xx errors: log at error level (without req/res details unless trace)
-        logger.error(`${req.method} ${req.url} ${res.statusCode}`);
-      } else if (logger.level === 'trace' && req.url !== '/mcp') {
-        // Trace level: log all requests with details (except /mcp which has its own logging)
-        logger.trace(logData, `${req.method} ${req.url} ${res.statusCode}`);
-      }
-      // /mcp endpoint: only MCP protocol messages logged (not HTTP details)
-      // 4xx errors: only in access log, not structured log (unless trace)
-      // 2xx/3xx: only in access log, not structured log (unless trace)
-    });
-    next();
-  });
-
-  // Health check endpoint
-  app.get('/health', (_req, res) => {
-    res.json({
-      status: 'ok',
-      network: nearClient.getNetwork(),
-      rpcUrl: nearClient.getRpcUrl(),
-      hasApiKey: !!clientConfig.apiKey,
-    });
-  });
-
-  // JSON-RPC endpoint for direct HTTP requests (with authentication)
-  app.post('/rpc', authMiddleware, async (req, res) => {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-      const { method, params, id } = req.body;
-
-      // Handle tools/list
-      if (method === 'tools/list') {
-        return res.json({
-          jsonrpc: '2.0',
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-          id,
-          result: {
-            tools: [
-              ...getBlockToolDefinitions(),
-              ...getAccountToolDefinitions(),
-              ...getContractToolDefinitions(),
-            ],
-          },
-        });
-      }
-
-      // Handle tools/call
-      if (method === 'tools/call') {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-        const request = { params: { name: params.name, arguments: params.arguments } };
-        const result = (await handleBlockTools(request, nearClient))
-          ?? (await handleAccountTools(request, nearClient))
-          ?? (await handleContractTools(request, nearClient));
-
-        if (result) {
-          return res.json({
-            jsonrpc: '2.0',
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-            id,
-            result,
-          });
-        }
-
-        return res.status(404).json({
-          jsonrpc: '2.0',
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-          id,
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-          error: { code: -32601, message: `Unknown tool: ${String(params.name)}` },
-        });
-      }
-
-      // Handle resources/list
-      if (method === 'resources/list') {
-        return res.json({
-          jsonrpc: '2.0',
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-          id,
-          result: {
-            resources: [
-              {
-                uri: 'near://blocks/latest',
-                name: 'Latest Blocks',
-                description: 'Feed of recent blocks (use ?count=N to specify number, default 10)',
-                mimeType: 'text/markdown',
-              },
-              {
-                uri: 'near://network/status',
-                name: 'Network Status',
-                description: 'Current network status and protocol information',
-                mimeType: 'text/markdown',
-              },
-            ],
-          },
-        });
-      }
-
-      // Handle resources/templates/list
-      if (method === 'resources/templates/list') {
-        return res.json({
-          jsonrpc: '2.0',
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-          id,
-          result: {
-            resourceTemplates: [
-              {
-                uriTemplate: 'near://account/{account_id}',
-                name: 'Account Card',
-                description: 'Summarized account information including balance, storage, and keys',
-                mimeType: 'text/markdown',
-              },
-              {
-                uriTemplate: 'near://contract/{account_id}/readme',
-                name: 'Contract README',
-                description: 'Contract metadata and suggested view methods',
-                mimeType: 'text/markdown',
-              },
-            ],
-          },
-        });
-      }
-
-      // Handle resources/read
-      if (method === 'resources/read') {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-        const uri = params.uri;
-        let content: string;
-
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-        if (uri.startsWith('near://account/')) {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-          const accountId = uri.replace('near://account/', '') as string;
-          const card = await generateAccountCard(nearClient, accountId);
-          content = formatAccountCard(card);
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-        } else if (uri.startsWith('near://blocks/latest')) {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-          const url = new URL(uri);
-          const count = parseInt(url.searchParams.get('count') ?? '10', 10);
-          const blocks = await generateBlocksFeed(nearClient, count);
-          content = formatBlocksFeed(blocks);
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-        } else if (uri.startsWith('near://contract/') && uri.endsWith('/readme')) {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-          const accountId = uri.replace('near://contract/', '').replace('/readme', '') as string;
-          const readme = await generateContractReadme(nearClient, accountId);
-          content = formatContractReadme(readme);
-        } else if (uri === 'near://network/status') {
-          const status = await generateNetworkStatus(nearClient);
-          content = formatNetworkStatus(status);
-        } else {
-          return res.status(404).json({
-            jsonrpc: '2.0',
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-            id,
-             
-            error: { code: -32602, message: `Unknown resource URI: ${String(uri)}` },
-          });
-        }
-
-        return res.json({
-          jsonrpc: '2.0',
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-          id,
-          result: {
-            contents: [{
-              // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-              uri,
-              mimeType: 'text/markdown',
-              text: content,
-            }],
-          },
-        });
-      }
-
-      // Unknown method
-      return res.status(404).json({
-        jsonrpc: '2.0',
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        id,
-         
-        error: { code: -32601, message: `Method not found: ${String(method)}` },
-      });
-    } catch (error: unknown) {
-      logError('RPC error', error);
-      const errorMessage = error instanceof Error ? error.message : 'Internal error';
-      return res.status(500).json({
-        jsonrpc: '2.0',
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-        id: req.body.id,
-        error: { code: -32603, message: errorMessage },
-      });
-    }
-  });
-
-  // MCP Streamable HTTP Transport endpoint (with authentication)
-  // Handles GET (SSE streams), POST (JSON-RPC messages), and DELETE (session termination)
-  app.all('/mcp', authMiddleware, async (req, res) => {
-    try {
-      // Extract session ID from request header (if present)
-      const sessionId = req.headers['mcp-session-id'] as string | undefined;
-
-      // Try to get existing session
-      let session = sessionId ? serverSessions.get(sessionId) : undefined;
-
-      if (!session) {
-        // Create new session with transport and server
-        const transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: () => randomUUID(),
-          enableJsonResponse: false, // Use SSE streaming for real-time updates
-
-          // Called when a new session is initialized
-          onsessioninitialized: (newSessionId: string) => {
-            logger.info(`MCP session initialized: ${newSessionId}`);
-            // Session will be stored after handleRequest completes
-          },
-
-          // Called when session is closed (DELETE request)
-          onsessionclosed: async (closedSessionId: string) => {
-            logger.info(`MCP session closed: ${closedSessionId}`);
-            const closedSession = serverSessions.get(closedSessionId);
-            if (closedSession) {
-              // Clean up server instance
-              await closedSession.server.close();
-              serverSessions.delete(closedSessionId);
-            }
-          },
-        });
-
-        // Create new server instance for this session
-        const server = createServer(nearClient);
-        await server.connect(transport);
-
-        session = { server, transport, nearClient };
-      }
-
-      // Log incoming MCP request at trace level
-      if (logger.level === 'trace' && req.body) {
-        logger.trace(
-          {
-            request: req.body as unknown,
-            sessionId: sessionId ?? 'new',
-          },
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-          `MCP → Server: ${req.body.method ?? 'unknown'}`,
-        );
-      }
-
-      // Capture outgoing SSE messages for trace logging
-      if (logger.level === 'trace') {
-        const originalWrite = res.write.bind(res);
-        const originalEnd = res.end.bind(res);
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        res.write = function(chunk: any, ...args: any[]) {
-          // Parse SSE data
-          if (typeof chunk === 'string' || Buffer.isBuffer(chunk)) {
-            const data = chunk.toString();
-            // SSE format can have multiple lines, split by newlines
-            const lines = data.split('\n');
-            for (const line of lines) {
-              if (line.startsWith('data: ')) {
-                try {
-                  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-                  const json = JSON.parse(line.substring(6));
-                  logger.trace(
-                    { response: json },
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-                    `MCP ← Server: ${json.result ? 'result' : json.error ? 'error' : 'message'}`,
-                  );
-                } catch {
-                  // Ignore parse errors for non-JSON SSE data
-                }
-              }
-            }
-          }
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-          return originalWrite(chunk, ...args);
-        };
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        res.end = function(chunk: any, ...args: any[]) {
-          if (chunk && (typeof chunk === 'string' || Buffer.isBuffer(chunk))) {
-            const data = chunk.toString();
-            // SSE format can have multiple lines, split by newlines
-            const lines = data.split('\n');
-            for (const line of lines) {
-              if (line.startsWith('data: ')) {
-                try {
-                  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-                  const json = JSON.parse(line.substring(6));
-                  logger.trace(
-                    { response: json },
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-                    `MCP ← Server: ${json.result ? 'result' : json.error ? 'error' : 'message'}`,
-                  );
-                } catch {
-                  // Ignore parse errors for non-JSON SSE data
-                }
-              }
-            }
-          }
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-          return originalEnd(chunk, ...args);
-        };
-      }
-
-      // Handle the request with the session's transport
-      await session.transport.handleRequest(req, res, req.body);
-
-      // Store session after first request (when sessionId is assigned)
-      if (session.transport.sessionId && !serverSessions.has(session.transport.sessionId)) {
-        serverSessions.set(session.transport.sessionId, session);
-        logger.info(`MCP session stored: ${session.transport.sessionId}`);
-      }
-    } catch (error) {
-      logError('MCP transport error', error);
-      if (!res.headersSent) {
-        res.status(500).json({
-          error: 'Internal server error',
-          message: error instanceof Error ? error.message : 'Unknown error',
-        });
-      }
-    }
-  });
-
+  // Start listening
   app.listen(port, () => {
     logger.info(`NEARWEEK MCP Server running on ${nearClient.getNetwork()} (HTTP mode)`);
     logger.info(`RPC URL: ${nearClient.getRpcUrl()}`);
