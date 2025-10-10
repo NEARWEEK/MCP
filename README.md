@@ -154,6 +154,102 @@ Configure the server via environment variables or CLI arguments:
 - **MCP API Key**: `MCP_API_KEY` or `API_KEY` (required for stdio mode authentication)
 - **MCP Backend API URL**: `AUTH_BACKEND_URL` (default: `http://localhost:3001`)
 
+#### Logging Configuration
+
+The MCP server uses a **two-tier logging approach** (HTTP mode only):
+
+1. **Access Logs** - HTTP request/response logging via [morgan](https://github.com/expressjs/morgan)
+2. **Structured Logs** - Application logging via [Pino](https://getpino.io/)
+
+**Configuration:**
+- **Log Level**: `LOG_LEVEL` - Set minimum log level for structured logs (default: `info`)
+- **Access Log Format**: `ACCESS_LOG_FORMAT` - Set format for HTTP access logs
+- **Node Environment**: `NODE_ENV` - Set to `production` for JSON logs, otherwise pretty-printed
+
+##### Access Logs (morgan)
+
+HTTP access logs are **always enabled** in HTTP mode and written to stdout, independent of the `LOG_LEVEL` setting. These provide one-line summaries of each HTTP request.
+
+**Configuration:**
+- Set format via `ACCESS_LOG_FORMAT` environment variable
+- Default: `[:date[iso]] :method :url :status :response-time ms - :res[content-length]`
+
+**Common format tokens:**
+- `:date[iso]` - ISO 8601 timestamp
+- `:method` - HTTP method (GET, POST, etc.)
+- `:url` - Request URL
+- `:status` - HTTP status code
+- `:response-time` - Response time in milliseconds
+- `:res[content-length]` - Response size in bytes
+- `:remote-addr` - Client IP address
+
+**Example access log output:**
+```
+[2025-01-09T14:30:15.123Z] POST /rpc 200 12.456 ms - 345
+[2025-01-09T14:30:20.789Z] GET /health 200 1.234 ms - 78
+[2025-01-09T14:30:25.456Z] POST /mcp 403 5.678 ms - 62
+```
+
+For more format tokens, see [morgan documentation](https://github.com/expressjs/morgan#tokens).
+
+##### Structured Logs (Pino)
+
+Application logs for startup messages, errors, and debug information. Controlled by `LOG_LEVEL` environment variable.
+
+**Log Levels:**
+- `fatal` (60) - Fatal errors that cause application termination (includes stack traces)
+- `error` (50) - Error conditions (includes stack traces for 5xx errors)
+- `warn` (40) - Warning conditions
+- `info` (30) - Informational messages (default)
+- `debug` (20) - Debug messages
+- `trace` (10) - Trace messages (very verbose, includes HTTP req/res details)
+
+**Example:**
+```bash
+# Show only warnings and errors
+LOG_LEVEL=warn npm start
+
+# Debug mode for development
+LOG_LEVEL=debug npm start
+
+# Trace level (includes detailed HTTP request logging)
+LOG_LEVEL=trace npm start
+
+# Production mode with JSON logs
+NODE_ENV=production npm start
+```
+
+**HTTP Request Logging Behavior:**
+- **Normal requests (2xx, 3xx)**: Only logged to access log
+- **Client errors (4xx)**: Only logged to access log
+- **Server errors (5xx)**: Logged to access log + error level in structured log
+- **Trace level**: All requests logged to structured log with req/res details
+
+**Development mode** (NODE_ENV != production):
+```
+[14:30:15.123] INFO: NEARWEEK MCP Server running on mainnet (HTTP mode)
+[14:30:30.123] ERROR: POST /rpc 500
+[14:30:35.456] TRACE: POST /health 200
+    method: "POST"
+    url: "/health"
+    statusCode: 200
+    responseTime: 12
+```
+
+**Production mode** (NODE_ENV=production):
+```json
+{"level":30,"time":1673270415123,"msg":"NEARWEEK MCP Server running on mainnet (HTTP mode)"}
+{"level":50,"time":1673270430123,"msg":"POST /rpc 500"}
+{"level":10,"time":1673270435456,"method":"POST","url":"/health","statusCode":200,"responseTime":12,"msg":"POST /health 200"}
+```
+
+**Log Separation:**
+- **Access logs**: All HTTP requests (always on in HTTP mode)
+- **Structured logs**: Application messages, errors, and (at trace level) HTTP details
+- At `trace` level: Both access logs and structured logs include HTTP request details
+
+**Note**: Stdio mode only has structured logs (no HTTP access logs), and they're written to stderr to avoid interfering with the MCP protocol on stdout.
+
 #### Using Custom RPC Providers
 
 To use alternative RPC providers like FastNEAR with API key authentication:

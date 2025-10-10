@@ -16,9 +16,11 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import 'dotenv/config';
 import express from 'express';
+import morgan from 'morgan';
 import { randomUUID } from 'node:crypto';
 import { NearClient, type NearClientConfig } from './near-client.js';
 import type { NearNetwork } from './types.js';
+import { initLogger, getLogger, logError, logFatal, type LogLevel } from './logger.js';
 
 // Tool handlers
 import { handleBlockTools, getBlockToolDefinitions } from './tools/block-tools.js';
@@ -38,6 +40,9 @@ function parseArgs(): {
   clientConfig: NearClientConfig;
   useHttp: boolean;
   port: number;
+  logLevel: LogLevel;
+  isDevelopment: boolean;
+  accessLogFormat: string;
 } {
   const args = process.argv.slice(2);
 
@@ -45,6 +50,9 @@ function parseArgs(): {
   let network: NearNetwork = (process.env.NEAR_NETWORK as NearNetwork) ?? 'mainnet';
   const rpcUrl = process.env.NEAR_RPC_URL ?? process.env.RPC_URL;
   const apiKey = process.env.NEAR_API_KEY ?? process.env.API_KEY;
+  const logLevel = (process.env.LOG_LEVEL ?? 'info') as LogLevel;
+  const isDevelopment = process.env.NODE_ENV !== 'production';
+  const accessLogFormat = process.env.ACCESS_LOG_FORMAT ?? '[:date[iso]] :method :url :status :response-time ms - :res[content-length]';
 
   let useHttp = false;
   let port = parseInt(process.env.PORT ?? '3000', 10);
@@ -72,7 +80,7 @@ function parseArgs(): {
     apiKey,
   };
 
-  return { clientConfig, useHttp, port };
+  return { clientConfig, useHttp, port, logLevel, isDevelopment, accessLogFormat };
 }
 
 /**
@@ -231,10 +239,11 @@ async function startStdioServer(clientConfig: NearClientConfig) {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  console.error(`NEARWEEK MCP Server running on ${nearClient.getNetwork()} (stdio mode)`);
-  console.error(`RPC URL: ${nearClient.getRpcUrl()}`);
+  const logger = getLogger();
+  logger.info(`NEARWEEK MCP Server running on ${nearClient.getNetwork()} (stdio mode)`);
+  logger.info(`RPC URL: ${nearClient.getRpcUrl()}`);
   if (clientConfig.apiKey) {
-    console.error('Using API Key authentication');
+    logger.info('Using API Key authentication');
   }
 }
 
@@ -268,7 +277,7 @@ async function validateApiKey(key: string): Promise<boolean> {
     const result = await response.json() as { valid: boolean };
     return result.valid === true;
   } catch (error) {
-    console.error('MCP Backend API error:', error);
+    logError('MCP Backend API error', error);
     return false;
   }
 }
@@ -306,14 +315,77 @@ async function authMiddleware(req: express.Request, res: express.Response, next:
 /**
  * Start server with HTTP transport
  */
-function startHttpServer(clientConfig: NearClientConfig, port: number) {
+function startHttpServer(clientConfig: NearClientConfig, port: number, accessLogFormat: string, logLevel: LogLevel) {
   const nearClient = new NearClient(clientConfig);
   const app = express();
+  const logger = getLogger();
 
   // Store server instances per session ID
   const serverSessions = new Map<string, ServerSession>();
 
+  // Morgan access logging (always enabled)
+  app.use(morgan(accessLogFormat));
+
+  // Response body capture middleware (for trace logging)
+  app.use((_req, res, next) => {
+    const originalJson = res.json.bind(res);
+    const originalSend = res.send.bind(res);
+
+    res.json = function(body: unknown) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
+      (res as any).capturedBody = body;
+      return originalJson(body);
+    };
+
+    res.send = function(body: unknown) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
+      (res as any).capturedBody = body;
+      return originalSend(body);
+    };
+
+    next();
+  });
+
   app.use(express.json());
+
+  // Structured logging middleware (only at trace level for normal requests)
+  app.use((req, res, next) => {
+    const start = Date.now();
+    res.on('finish', () => {
+      const duration = Date.now() - start;
+      const logData = {
+        method: req.method,
+        url: req.url,
+        // Don't log request/response body for /mcp (has its own logging)
+        ...(req.url !== '/mcp' && {
+          requestBody: req.body as unknown,
+        }),
+        statusCode: res.statusCode,
+        responseTime: duration,
+        ...(logger.level === 'trace' && req.url !== '/mcp' && {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+          responseBody: (res as any).capturedBody,
+          responseHeaders: {
+            'content-type': res.get('content-type'),
+            'content-length': res.get('content-length'),
+          },
+        }),
+      };
+
+      // Only log errors to structured logs, or everything at trace level
+      if (res.statusCode >= 500) {
+        // 5xx errors: log at error level (without req/res details unless trace)
+        logger.error(`${req.method} ${req.url} ${res.statusCode}`);
+      } else if (logger.level === 'trace' && req.url !== '/mcp') {
+        // Trace level: log all requests with details (except /mcp which has its own logging)
+        logger.trace(logData, `${req.method} ${req.url} ${res.statusCode}`);
+      }
+      // /mcp endpoint: only MCP protocol messages logged (not HTTP details)
+      // 4xx errors: only in access log, not structured log (unless trace)
+      // 2xx/3xx: only in access log, not structured log (unless trace)
+    });
+    next();
+  });
 
   // Health check endpoint
   app.get('/health', (_req, res) => {
@@ -485,7 +557,7 @@ function startHttpServer(clientConfig: NearClientConfig, port: number) {
         error: { code: -32601, message: `Method not found: ${String(method)}` },
       });
     } catch (error: unknown) {
-      console.error('RPC error:', error);
+      logError('RPC error', error);
       const errorMessage = error instanceof Error ? error.message : 'Internal error';
       return res.status(500).json({
         jsonrpc: '2.0',
@@ -514,13 +586,13 @@ function startHttpServer(clientConfig: NearClientConfig, port: number) {
 
           // Called when a new session is initialized
           onsessioninitialized: (newSessionId: string) => {
-            console.info(`MCP session initialized: ${newSessionId}`);
+            logger.info(`MCP session initialized: ${newSessionId}`);
             // Session will be stored after handleRequest completes
           },
 
           // Called when session is closed (DELETE request)
           onsessionclosed: async (closedSessionId: string) => {
-            console.info(`MCP session closed: ${closedSessionId}`);
+            logger.info(`MCP session closed: ${closedSessionId}`);
             const closedSession = serverSessions.get(closedSessionId);
             if (closedSession) {
               // Clean up server instance
@@ -537,16 +609,87 @@ function startHttpServer(clientConfig: NearClientConfig, port: number) {
         session = { server, transport, nearClient };
       }
 
+      // Log incoming MCP request at trace level
+      if (logger.level === 'trace' && req.body) {
+        logger.trace(
+          {
+            request: req.body as unknown,
+            sessionId: sessionId ?? 'new',
+          },
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+          `MCP → Server: ${req.body.method ?? 'unknown'}`,
+        );
+      }
+
+      // Capture outgoing SSE messages for trace logging
+      if (logger.level === 'trace') {
+        const originalWrite = res.write.bind(res);
+        const originalEnd = res.end.bind(res);
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        res.write = function(chunk: any, ...args: any[]) {
+          // Parse SSE data
+          if (typeof chunk === 'string' || Buffer.isBuffer(chunk)) {
+            const data = chunk.toString();
+            // SSE format can have multiple lines, split by newlines
+            const lines = data.split('\n');
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                try {
+                  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+                  const json = JSON.parse(line.substring(6));
+                  logger.trace(
+                    { response: json },
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+                    `MCP ← Server: ${json.result ? 'result' : json.error ? 'error' : 'message'}`,
+                  );
+                } catch {
+                  // Ignore parse errors for non-JSON SSE data
+                }
+              }
+            }
+          }
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+          return originalWrite(chunk, ...args);
+        };
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        res.end = function(chunk: any, ...args: any[]) {
+          if (chunk && (typeof chunk === 'string' || Buffer.isBuffer(chunk))) {
+            const data = chunk.toString();
+            // SSE format can have multiple lines, split by newlines
+            const lines = data.split('\n');
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                try {
+                  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+                  const json = JSON.parse(line.substring(6));
+                  logger.trace(
+                    { response: json },
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+                    `MCP ← Server: ${json.result ? 'result' : json.error ? 'error' : 'message'}`,
+                  );
+                } catch {
+                  // Ignore parse errors for non-JSON SSE data
+                }
+              }
+            }
+          }
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+          return originalEnd(chunk, ...args);
+        };
+      }
+
       // Handle the request with the session's transport
       await session.transport.handleRequest(req, res, req.body);
 
       // Store session after first request (when sessionId is assigned)
       if (session.transport.sessionId && !serverSessions.has(session.transport.sessionId)) {
         serverSessions.set(session.transport.sessionId, session);
-        console.info(`MCP session stored: ${session.transport.sessionId}`);
+        logger.info(`MCP session stored: ${session.transport.sessionId}`);
       }
     } catch (error) {
-      console.error('MCP transport error:', error);
+      logError('MCP transport error', error);
       if (!res.headersSent) {
         res.status(500).json({
           error: 'Internal server error',
@@ -557,15 +700,17 @@ function startHttpServer(clientConfig: NearClientConfig, port: number) {
   });
 
   app.listen(port, () => {
-    console.info(`NEARWEEK MCP Server running on ${nearClient.getNetwork()} (HTTP mode)`);
-    console.info(`RPC URL: ${nearClient.getRpcUrl()}`);
+    logger.info(`NEARWEEK MCP Server running on ${nearClient.getNetwork()} (HTTP mode)`);
+    logger.info(`RPC URL: ${nearClient.getRpcUrl()}`);
     if (clientConfig.apiKey) {
-      console.info('Using API Key authentication');
+      logger.info('Using API Key authentication');
     }
-    console.info(`Listening on http://localhost:${port}`);
-    console.info(`MCP endpoint: http://localhost:${port}/mcp`);
-    console.info(`RPC endpoint: http://localhost:${port}/rpc`);
-    console.info(`Health check: http://localhost:${port}/health`);
+    logger.info(`Listening on http://localhost:${port}`);
+    logger.info(`MCP endpoint: http://localhost:${port}/mcp`);
+    logger.info(`RPC endpoint: http://localhost:${port}/rpc`);
+    logger.info(`Health check: http://localhost:${port}/health`);
+    logger.info(`Access log format: ${accessLogFormat}`);
+    logger.info(`Log Level: ${logLevel}`);
   });
 }
 
@@ -573,39 +718,43 @@ function startHttpServer(clientConfig: NearClientConfig, port: number) {
  * Main entry point
  */
 async function main() {
-  const { clientConfig, useHttp, port } = parseArgs();
+  const { clientConfig, useHttp, port, logLevel, isDevelopment, accessLogFormat } = parseArgs();
+
+  // Initialize logger
+  initLogger(logLevel, isDevelopment);
+  const logger = getLogger();
 
   if (useHttp) {
-    startHttpServer(clientConfig, port);
+    startHttpServer(clientConfig, port, accessLogFormat, logLevel);
   } else {
     // Stdio mode: validate API key from environment variable
     const apiKey = process.env.MCP_API_KEY ?? process.env.API_KEY;
 
     if (!apiKey) {
-      console.error('Error: API_KEY or MCP_API_KEY environment variable required for stdio mode');
-      console.error('Set it with: export MCP_API_KEY=your-api-key-here');
+      logger.error('Error: API_KEY or MCP_API_KEY environment variable required for stdio mode');
+      logger.error('Set it with: export MCP_API_KEY=your-api-key-here');
       // eslint-disable-next-line n/no-process-exit
       process.exit(1);
     }
 
     // Validate with MCP Backend API
-    console.info('Validating API key with MCP Backend API...');
+    logger.info('Validating API key with MCP Backend API...');
     const isValid = await validateApiKey(apiKey);
 
     if (!isValid) {
-      console.error('Error: Invalid or inactive API key');
-      console.error('Please check your API key or contact the administrator');
+      logger.error('Error: Invalid or inactive API key');
+      logger.error('Please check your API key or contact the administrator');
       // eslint-disable-next-line n/no-process-exit
       process.exit(1);
     }
 
-    console.info('✓ API key validated successfully');
+    logger.info('✓ API key validated successfully');
     await startStdioServer(clientConfig);
   }
 }
 
 // Run the server
 main().catch((error) => {
-  console.error('Server error:', error);
+  logFatal('Server error', error);
   throw error;
 });

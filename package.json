@@ -32,9 +32,13 @@
     "@near-js/accounts": "^2.1.0",
     "@near-js/providers": "^2.0.4",
     "@near-js/types": "^2.0.3",
+    "@types/morgan": "^1.9.10",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
+    "morgan": "^1.10.1",
     "near-api-js": "^5.0.1",
+    "pino": "^10.0.0",
+    "pino-pretty": "^13.1.1",
     "zod": "^3.24.1"
   },
   "devDependencies": {
