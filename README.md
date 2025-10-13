@@ -126,20 +126,33 @@ The server will validate the API key on startup and exit if invalid.
 
 ### HTTP Mode Authentication
 
-API key must be provided as a Bearer token in the `Authorization` header:
+API key can be provided in two ways:
+
+**Option 1: Authorization Header (Recommended)**
 
 ```bash
 # Start the server
 npm start -- --http
 
-# Make authenticated requests
+# Make authenticated requests with Authorization header
 curl -X POST http://localhost:3000/mcp \
   -H "Authorization: Bearer your-generated-api-key-here" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
 ```
 
-All requests to `/mcp` and `/rpc` endpoints require the `Authorization: Bearer <api-key>` header.
+**Option 2: Query Parameter**
+
+```bash
+# Make authenticated requests with query parameter
+curl -X POST "http://localhost:3000/mcp?apiKey=your-generated-api-key-here" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
+```
+
+⚠️ **Security Note**: Query parameters appear in server logs and browser history. The Authorization header is more secure for production use.
+
+Both `/mcp` and `/rpc` endpoints support both authentication methods.
 
 ### Configuration
 
@@ -320,7 +333,9 @@ Start the server in HTTP mode and connect to:
 
 #### Using the MCP endpoint (for MCP clients)
 
-MCP clients should use the `/mcp` endpoint with proper protocol headers and Bearer token authentication. The server manages sessions automatically.
+MCP clients should use the `/mcp` endpoint with proper protocol headers. The server manages sessions automatically.
+
+**With Authorization Header:**
 
 ```bash
 # Example authenticated MCP request
@@ -330,20 +345,53 @@ curl -X POST http://localhost:3000/mcp \
   -d '{"jsonrpc":"2.0","method":"initialize","params":{},"id":1}'
 ```
 
+**With Query Parameter:**
+
+```bash
+# Example using query parameter
+curl -X POST "http://localhost:3000/mcp?apiKey=your-generated-api-key-here" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"initialize","params":{},"id":1}'
+```
+
 #### Using the RPC endpoint (for simple HTTP clients)
 
 For direct JSON-RPC requests without MCP protocol overhead (still requires authentication):
 
+**With Authorization Header:**
+
 ```bash
-# List available tools (with authentication)
+# List available tools
 curl -X POST http://localhost:3000/rpc \
   -H "Authorization: Bearer your-generated-api-key-here" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc": "2.0", "method": "tools/list", "id": 1}'
 
-# Call a tool (with authentication)
+# Call a tool
 curl -X POST http://localhost:3000/rpc \
   -H "Authorization: Bearer your-generated-api-key-here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "near.getBlock",
+      "arguments": {"finality": "final"}
+    },
+    "id": 2
+  }'
+```
+
+**With Query Parameter:**
+
+```bash
+# List available tools
+curl -X POST "http://localhost:3000/rpc?apiKey=your-generated-api-key-here" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc": "2.0", "method": "tools/list", "id": 1}'
+
+# Call a tool
+curl -X POST "http://localhost:3000/rpc?apiKey=your-generated-api-key-here" \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",

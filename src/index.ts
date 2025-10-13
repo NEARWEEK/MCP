@@ -21,7 +21,7 @@ import type { NearNetwork } from './types.js';
 import { initLogger, getLogger, logError, logFatal, type LogLevel } from './logger.js';
 
 // HTTP module imports
-import { createResponseCaptureMiddleware, createStructuredLoggingMiddleware } from './http/middleware.js';
+import { createResponseCaptureMiddleware, createStructuredLoggingMiddleware, maskApiKeyInUrl } from './http/middleware.js';
 import { createHealthCheckHandler, createRpcHandler, createMcpHandler } from './http/handlers.js';
 import { SessionManager } from './http/session.js';
 
@@ -277,21 +277,35 @@ async function validateApiKey(key: string): Promise<boolean> {
 }
 
 /**
- * Express middleware to validate API key from Authorization header
+ * Express middleware to validate API key from Authorization header or query parameter
  */
 async function authMiddleware(req: express.Request, res: express.Response, next: express.NextFunction): Promise<void> {
-  const authHeader = req.headers.authorization;
+  const logger = getLogger();
 
-  if (!authHeader?.startsWith('Bearer ')) {
+  // Try to get API key from Authorization header first
+  let apiKey: string | undefined;
+
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith('Bearer ')) {
+    apiKey = authHeader.substring(7); // Remove "Bearer "
+  }
+
+  // Fallback to query parameter if header not present
+  if (!apiKey && req.query.apiKey) {
+    apiKey = req.query.apiKey as string;
+    logger.debug('API key provided via query parameter (consider using Authorization header for production)');
+  }
+
+  // No API key found in either location
+  if (!apiKey) {
     res.status(401).json({
       error: 'Unauthorized',
-      message: 'Missing or invalid Authorization header. Expected: Authorization: Bearer <api-key>',
+      message: 'Missing API key. Provide either Authorization: Bearer <api-key> header or apiKey query parameter',
     });
     return;
   }
 
-  const apiKey = authHeader.substring(7); // Remove "Bearer "
-
+  // Validate the API key
   const isValid = await validateApiKey(apiKey);
 
   if (!isValid) {
@@ -319,7 +333,12 @@ function startHttpServer(clientConfig: NearClientConfig, port: number, accessLog
 
   // Configure middleware
   app.set('trust proxy', true);
-  app.use(morgan(accessLogFormat)); // Access logging
+
+  // Configure morgan to mask API keys in access logs
+  morgan.token('masked-url', (req) => maskApiKeyInUrl(req.url ?? ''));
+  const maskedAccessLogFormat = accessLogFormat.replace(/:url/g, ':masked-url');
+
+  app.use(morgan(maskedAccessLogFormat)); // Access logging with masked URLs
   app.use(createResponseCaptureMiddleware()); // Response body capture for trace logging
   app.use(express.json()); // Parse JSON bodies
   app.use(createStructuredLoggingMiddleware()); // Structured HTTP logging
