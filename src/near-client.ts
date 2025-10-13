@@ -135,19 +135,14 @@ export class NearClient {
   /**
    * View account changes
    */
-   
+
   async getAccountChanges(
     accountIds: string[],
     ref?: BlockReference,
   ): Promise<any> {
     const blockRef = this.buildBlockQuery(ref);
-     
-    return this.provider.query({
-      request_type: 'view_account_changes',
-      account_ids: accountIds,
-      ...blockRef,
-     
-    });
+
+    return this.provider.accountChanges(accountIds, blockRef);
   }
 
   /**
