@@ -318,6 +318,7 @@ function startHttpServer(clientConfig: NearClientConfig, port: number, accessLog
   const sessionManager = new SessionManager();
 
   // Configure middleware
+  app.set('trust proxy', true);
   app.use(morgan(accessLogFormat)); // Access logging
   app.use(createResponseCaptureMiddleware()); // Response body capture for trace logging
   app.use(express.json()); // Parse JSON bodies
