@@ -90,13 +90,10 @@ export async function handleContractTools(request: ToolRequest, nearClient: Near
     });
 
     const args = schema.parse(request.params.arguments);
+    let signerId = args.signer_id;
+    signerId ??= nearClient.getNetwork() === 'mainnet' ? 'near' : 'testnet';
 
-    // NEAR SDK requires accountId for getTransaction
-    if (!args.signer_id) {
-      throw new Error('signer_id is required for transaction lookup');
-    }
-
-    const result = await nearClient.getTransaction(args.hash, args.signer_id);
+    const result = await nearClient.getTransaction(args.hash, signerId);
 
     return {
       content: [

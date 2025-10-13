@@ -212,7 +212,7 @@ export class NearClient {
    */
    
   async getTransaction(txHash: string, accountId: string): Promise<any> {
-    return this.provider.txStatus(txHash, accountId);
+    return this.provider.txStatusReceipts(txHash, accountId);
   }
 
   /**
