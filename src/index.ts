@@ -52,7 +52,7 @@ function parseArgs(): {
   // Read configuration from environment variables
   let network: NearNetwork = (process.env.NEAR_NETWORK as NearNetwork) ?? 'mainnet';
   const rpcUrl = process.env.NEAR_RPC_URL ?? process.env.RPC_URL;
-  const apiKey = process.env.NEAR_API_KEY ?? process.env.API_KEY;
+  const apiKey = process.env.NEAR_API_KEY;
   const logLevel = (process.env.LOG_LEVEL ?? 'info') as LogLevel;
   const isDevelopment = process.env.NODE_ENV !== 'production';
   const accessLogFormat = process.env.ACCESS_LOG_FORMAT ?? '[:date[iso]] :method :url :status :response-time ms - :res[content-length]';

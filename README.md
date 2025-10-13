@@ -151,7 +151,7 @@ Configure the server via environment variables or CLI arguments:
 - **Transport**: CLI flag `--http` or `-h` for HTTP mode (default: stdio)
 - **Port**: `PORT=3000` or CLI arg `--port=8080` (HTTP mode only)
 - **RPC URL**: `NEAR_RPC_URL` or `RPC_URL` (overrides default network endpoint)
-- **NEAR API Key**: `NEAR_API_KEY` or `API_KEY` (for authenticated NEAR RPC providers like FastNEAR)
+- **NEAR API Key**: `NEAR_API_KEY` (for authenticated NEAR RPC providers like FastNEAR)
 
 #### Authentication Configuration
 
