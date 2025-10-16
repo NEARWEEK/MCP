@@ -404,6 +404,67 @@ curl -X POST "http://localhost:3000/rpc?apiKey=your-generated-api-key-here" \
   }'
 ```
 
+## Public Server
+
+A public instance of this MCP server is available at **https://mcp.nearweek.com/mcp** for immediate use without local installation.
+
+### Connecting Popular MCP Clients
+
+To use the public server, you'll need an API key. Contact the service administrator or visit the authentication backend to obtain one.
+
+#### Claude Code
+
+Add the server using the Claude Code CLI:
+
+**Option 1: Using Authorization Header (Recommended)**
+```bash
+claude mcp add --transport http nearweek https://mcp.nearweek.com/mcp \
+  --header "Authorization: Bearer Your_API_key"
+```
+
+**Option 2: Using Query Parameter**
+```bash
+claude mcp add --transport http nearweek "https://mcp.nearweek.com/mcp?apiKey=Your_API_key"
+```
+
+⚠️ **Security Note**: Replace `Your_API_key` with your actual API key. The Authorization header method is more secure for production use.
+
+#### Visual Studio Code
+
+Add to your VS Code MCP settings (`.vscode/mcp.json` or user settings):
+
+```json
+{
+  "mcpServers": {
+    "nearweek": {
+      "transport": "http",
+      "url": "https://mcp.nearweek.com/mcp",
+      "headers": {
+        "Authorization": "Bearer Your_API_key"
+      }
+    }
+  }
+}
+```
+
+#### MCP Inspector
+
+1. Start the inspector:
+```bash
+npx @modelcontextprotocol/inspector
+```
+
+2. In your browser, configure the connection on the left side:
+   - **Transport Type**: `Streamable HTTP`
+   - **URL**: `https://mcp.nearweek.com/mcp`
+
+3. Open the **Authentication** dialog, switch to **JSON mode**, and paste in the **Custom Headers (JSON)** field:
+```json
+{
+  "Authorization": "Bearer Your_API_key"
+}
+```
+
 ## Requirements
 
 - Node.js 22 or higher
@@ -422,3 +483,9 @@ curl -X POST "http://localhost:3000/rpc?apiKey=your-generated-api-key-here" \
 - **HTTP Server**: Express.js with dual endpoints:
   - `/mcp` - Full MCP protocol with Streamable HTTP transport
   - `/rpc` - Simple JSON-RPC for non-MCP clients
+
+## License
+
+This project is licensed under the [Mozilla Public License Version 2.0](LICENSE).
+
+[![License: MPL 2.0](https://img.shields.io/badge/License-MPL_2.0-brightgreen.svg)](https://opensource.org/licenses/MPL-2.0)
